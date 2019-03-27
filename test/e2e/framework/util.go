@@ -177,6 +177,10 @@ const (
 	// How long PVs have to become deleted
 	PVDeletingTimeout = 3 * time.Minute
 
+	// How long a node is allowed to become "Ready" after it is recreated before
+	// the test is considered failed.
+	RecreateNodeReadyAgainTimeout = 10 * time.Minute
+
 	// How long a node is allowed to become "Ready" after it is restarted before
 	// the test is considered failed.
 	RestartNodeReadyAgainTimeout = 5 * time.Minute

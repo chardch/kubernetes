@@ -15,6 +15,7 @@ go_library(
         "kubelet_security.go",
         "node_lease.go",
         "reboot.go",
+        "recreate_node.go",
         "resize_nodes.go",
         "restart.go",
     ],
