@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package lifecycle
+package gce
 
 import (
 	"fmt"
@@ -27,12 +27,27 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	clientset "k8s.io/client-go/kubernetes"
-	"k8s.io/kubernetes/test/e2e/common"
 	"k8s.io/kubernetes/test/e2e/framework"
 	testutils "k8s.io/kubernetes/test/utils"
 )
 
-var _ = SIGDescribe("Recreate [Feature:Recreate]", func() {
+func nodeNames(nodes []v1.Node) []string {
+	result := make([]string, 0, len(nodes))
+	for i := range nodes {
+		result = append(result, nodes[i].Name)
+	}
+	return result
+}
+
+func podNames(pods []v1.Pod) []string {
+	result := make([]string, 0, len(pods))
+	for i := range pods {
+		result = append(result, pods[i].Name)
+	}
+	return result
+}
+
+var _ = Describe("Recreate [Feature:Recreate]", func() {
 	f := framework.NewDefaultFramework("recreate")
 	var originalNodes []v1.Node
 	var originalPodNames []string
@@ -53,14 +68,13 @@ var _ = SIGDescribe("Recreate [Feature:Recreate]", func() {
 		Expect(err).NotTo(HaveOccurred())
 		allPods := ps.List()
 
-		originalPods := filterIrrelevantPods(allPods)
+		originalPods := framework.FilterNonRestartablePods(allPods)
 		originalPodNames = make([]string, len(originalPods))
 		for i, p := range originalPods {
 			originalPodNames[i] = p.ObjectMeta.Name
 		}
 
 		if !framework.CheckPodsRunningReadyOrSucceeded(f.ClientSet, systemNamespace, originalPodNames, framework.PodReadyBeforeTimeout) {
-			printStatusAndLogsForNotReadyPods(f.ClientSet, systemNamespace, originalPodNames, originalPods)
 			framework.Failf("At least one pod wasn't running and ready or succeeded at test start.")
 		}
 
@@ -90,12 +104,12 @@ var _ = SIGDescribe("Recreate [Feature:Recreate]", func() {
 
 // Recreate all the nodes in the test instance group
 func testRecreate(c clientset.Interface, ps *testutils.PodStore, systemNamespace string, nodes []v1.Node, podNames []string) {
-	err := common.RecreateNodes(c, nodes)
+	err := recreateNodes(c, nodes)
 	if err != nil {
 		framework.Failf("Test failed; failed to start the restart instance group command.")
 	}
 
-	err = common.WaitForNodeBootIdsToChange(c, nodes, framework.RecreateNodeReadyAgainTimeout)
+	err = waitForNodeBootIdsToChange(c, nodes, framework.RecreateNodeReadyAgainTimeout)
 	if err != nil {
 		framework.Failf("Test failed; failed to recreate at least one node in %v.", framework.RecreateNodeReadyAgainTimeout)
 	}
@@ -111,12 +125,10 @@ func testRecreate(c clientset.Interface, ps *testutils.PodStore, systemNamespace
 
 	// Make sure the pods from before node recreation are running/completed
 	podCheckStart := time.Now()
-	podNamesAfter, err := waitForNPods(ps, len(podNames), framework.RestartPodReadyAgainTimeout)
+	podNamesAfter, err := framework.WaitForNRestartablePods(ps, len(podNames), framework.RestartPodReadyAgainTimeout)
 	Expect(err).NotTo(HaveOccurred())
 	remaining := framework.RestartPodReadyAgainTimeout - time.Since(podCheckStart)
 	if !framework.CheckPodsRunningReadyOrSucceeded(c, systemNamespace, podNamesAfter, remaining) {
-		pods := ps.List()
-		printStatusAndLogsForNotReadyPods(c, systemNamespace, podNamesAfter, pods)
 		framework.Failf("At least one pod wasn't running and ready after the restart.")
 	}
 }

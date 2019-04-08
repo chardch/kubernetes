@@ -19,7 +19,6 @@ package common
 import (
 	"bytes"
 	"fmt"
-	"strings"
 	"text/template"
 	"time"
 
@@ -38,9 +37,8 @@ import (
 type Suite string
 
 const (
-	E2E          Suite = "e2e"
-	NodeE2E      Suite = "node e2e"
-	pollInterval       = 30 * time.Second
+	E2E     Suite = "e2e"
+	NodeE2E Suite = "node e2e"
 )
 
 var CurrentSuite Suite
@@ -174,7 +172,7 @@ func RestartNodes(c clientset.Interface, nodes []v1.Node) error {
 	// Wait for their boot IDs to change.
 	for i := range nodes {
 		node := &nodes[i]
-		if err := wait.Poll(pollInterval, framework.RestartNodeReadyAgainTimeout, func() (bool, error) {
+		if err := wait.Poll(30*time.Second, framework.RestartNodeReadyAgainTimeout, func() (bool, error) {
 			newNode, err := c.CoreV1().Nodes().Get(node.Name, metav1.GetOptions{})
 			if err != nil {
 				return false, fmt.Errorf("error getting node info after reboot: %s", err)
@@ -183,68 +181,6 @@ func RestartNodes(c clientset.Interface, nodes []v1.Node) error {
 		}); err != nil {
 			return fmt.Errorf("error waiting for node %s boot ID to change: %s", node.Name, err)
 		}
-	}
-	return nil
-}
-
-func RecreateNodes(c clientset.Interface, nodes []v1.Node) error {
-	// Build mapping from zone to nodes in that zone.
-	nodeNamesByZone := make(map[string][]string)
-	for i := range nodes {
-		node := &nodes[i]
-		zone := framework.TestContext.CloudConfig.Zone
-		if z, ok := node.Labels[v1.LabelZoneFailureDomain]; ok {
-			zone = z
-		}
-		nodeNamesByZone[zone] = append(nodeNamesByZone[zone], node.Name)
-	}
-
-	// Find the sole managed instance group name
-	var instanceGroup string
-	if strings.Index(framework.TestContext.CloudConfig.NodeInstanceGroup, ",") >= 0 {
-		return fmt.Errorf("Test does not support cluster setup with more than one managed instance group: %s", framework.TestContext.CloudConfig.NodeInstanceGroup)
-	}
-	instanceGroup = framework.TestContext.CloudConfig.NodeInstanceGroup
-
-	// Recreate the nodes.
-	for zone, nodeNames := range nodeNamesByZone {
-		args := []string{
-			"compute",
-			fmt.Sprintf("--project=%s", framework.TestContext.CloudConfig.ProjectID),
-			"instance-groups",
-			"managed",
-			"recreate-instances",
-			instanceGroup,
-		}
-
-		args = append(args, fmt.Sprintf("--instances=%s", strings.Join(nodeNames, ",")))
-		args = append(args, fmt.Sprintf("--zone=%s", zone))
-		framework.Logf("Recreating instance group %s.", instanceGroup)
-		stdout, stderr, err := framework.RunCmd("gcloud", args...)
-		if err != nil {
-			return fmt.Errorf("error restarting nodes: %s\nstdout: %s\nstderr: %s", err, stdout, stderr)
-		}
-	}
-	return nil
-}
-
-func WaitForNodeBootIdsToChange(c clientset.Interface, nodes []v1.Node, timeout time.Duration) error {
-	errMsg := []string{}
-	for i := range nodes {
-		node := &nodes[i]
-		if err := wait.Poll(pollInterval, timeout, func() (bool, error) {
-			newNode, err := c.CoreV1().Nodes().Get(node.Name, metav1.GetOptions{})
-			if err != nil {
-				framework.Logf("Could not get node info: %s. Retrying in %v.", err, pollInterval)
-				return false, nil
-			}
-			return node.Status.NodeInfo.BootID != newNode.Status.NodeInfo.BootID, nil
-		}); err != nil {
-			errMsg = append(errMsg, "Error waiting for node %s boot ID to change: %s", node.Name, err.Error())
-		}
-	}
-	if len(errMsg) > 0 {
-		return fmt.Errorf(strings.Join(errMsg, ","))
 	}
 	return nil
 }
