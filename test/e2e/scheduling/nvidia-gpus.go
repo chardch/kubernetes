@@ -18,14 +18,16 @@ package scheduling
 
 import (
 	"os"
+	"regexp"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	extensionsinternal "k8s.io/kubernetes/pkg/apis/extensions"
 	"k8s.io/kubernetes/test/e2e/framework"
+	"k8s.io/kubernetes/test/e2e/framework/providers/gce"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
 	. "github.com/onsi/ginkgo"
@@ -176,5 +178,101 @@ var _ = SIGDescribe("[Feature:GPUDevicePlugin]", func() {
 	f := framework.NewDefaultFramework("device-plugin-gpus")
 	It("run Nvidia GPU Device Plugin tests", func() {
 		testNvidiaGPUs(f)
+	})
+})
+
+func testNvidiaGPUsJob(f *framework.Framework) {
+	_ = SetupNVIDIAGPUNode(f, false)
+	By("Starting GPU job")
+	makeCudaAdditionDevicePluginTestJob(f)
+
+	job, err := framework.GetJob(f.ClientSet, f.Namespace.Name, "cuda-add")
+	Expect(err).NotTo(HaveOccurred())
+
+	// make sure job is running by waiting for its first pod to start running
+	err = framework.WaitForAllJobPodsRunning(f.ClientSet, f.Namespace.Name, job.Name, 1)
+	Expect(err).NotTo(HaveOccurred())
+
+	numNodes, err := framework.NumberOfRegisteredNodes(f.ClientSet)
+	Expect(err).NotTo(HaveOccurred())
+	nodes, err := framework.CheckNodesReady(f.ClientSet, numNodes, framework.NodeReadyInitialTimeout)
+	Expect(err).NotTo(HaveOccurred())
+
+	By("Recreating nodes")
+	gce.RecreateNodes(f.ClientSet, nodes)
+	By("Done recreating nodes")
+
+	By("Waiting for gpu job to finish")
+	err = framework.WaitForJobFinish(f.ClientSet, f.Namespace.Name, job.Name)
+	Expect(err).NotTo(HaveOccurred())
+	By("Done with gpu job")
+
+	Expect(job.Status.Failed).To(BeZero(), "Job pods failed during node recreation: %v", job.Status.Failed)
+
+	verifyJobPodsSucceed(f)
+}
+
+// How can we ensure that the pod is not executed before the GPU driver installation pod is installed?
+// This should be a feature to make sure the pod is executed before anything else
+func makeCudaAdditionDevicePluginTestJob(f *framework.Framework) {
+	var activeSeconds int64 = 3600
+	// Specifies 20 completions to make sure the job life spans across the recreate.
+	testJob := framework.NewTestJob("succeed", "cuda-add", v1.RestartPolicyAlways, 1, 5, &activeSeconds, 6)
+	testJob.Spec.Template.Spec = v1.PodSpec{
+		RestartPolicy: v1.RestartPolicyOnFailure,
+		Containers: []v1.Container{
+			{
+				Name:    "vector-addition",
+				Image:   imageutils.GetE2EImage(imageutils.CudaVectorAdd),
+				Command: []string{"/bin/sh", "-c", "./vectorAdd && sleep 60"},
+				Resources: v1.ResourceRequirements{
+					Limits: v1.ResourceList{
+						framework.NVIDIAGPUResourceName: *resource.NewQuantity(1, resource.DecimalSI),
+					},
+				},
+			},
+		},
+	}
+	ns := f.Namespace.Name
+	_, err := framework.CreateJob(f.ClientSet, ns, testJob)
+	Expect(err).NotTo(HaveOccurred())
+	framework.Logf("Created job %v", testJob)
+}
+
+// verifyJobPodsSucceed verifies that each of the cuda job's pods successfully complete.
+func verifyJobPodsSucceed(f *framework.Framework) {
+	// TODO: Wait for client pod to complete.
+	ns := f.Namespace.Name
+
+	pods, err := framework.GetJobPods(f.ClientSet, f.Namespace.Name, "cuda-add")
+	Expect(err).NotTo(HaveOccurred())
+	createdPods := pods.Items
+	createdPodNames := podNames(createdPods)
+	framework.Logf("Got the following pods for job cuda-add: %v", createdPodNames)
+
+	for _, podName := range createdPodNames {
+		f.PodClient().WaitForSuccess(podName, 5*time.Minute)
+		logs, err := framework.GetPodLogs(f.ClientSet, ns, podName, "vector-addition")
+		framework.ExpectNoError(err, "Should be able to get logs for pod %v", podName)
+		regex := regexp.MustCompile("PASSED")
+		Expect(regex.MatchString(logs)).To(BeTrue())
+	}
+}
+
+func podNames(pods []v1.Pod) []string {
+	originalPodNames := make([]string, len(pods))
+	for i, p := range pods {
+		originalPodNames[i] = p.ObjectMeta.Name
+	}
+	return originalPodNames
+}
+
+var _ = SIGDescribe("GPUDevicePluginAcrossRecreate [Feature:Recreate]", func() {
+	BeforeEach(func() {
+		framework.SkipUnlessProviderIs("gce", "gke")
+	})
+	f := framework.NewDefaultFramework("device-plugin-gpus-recreate")
+	It("run Nvidia GPU Device Plugin tests with a recreation", func() {
+		testNvidiaGPUsJob(f)
 	})
 })

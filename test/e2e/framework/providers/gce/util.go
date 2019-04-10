@@ -28,7 +28,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 )
 
-func recreateNodes(c clientset.Interface, nodes []v1.Node) error {
+func RecreateNodes(c clientset.Interface, nodes []v1.Node) error {
 	// Build mapping from zone to nodes in that zone.
 	nodeNamesByZone := make(map[string][]string)
 	for i := range nodes {
@@ -69,7 +69,7 @@ func recreateNodes(c clientset.Interface, nodes []v1.Node) error {
 	return nil
 }
 
-func waitForNodeBootIdsToChange(c clientset.Interface, nodes []v1.Node, timeout time.Duration) error {
+func WaitForNodeBootIdsToChange(c clientset.Interface, nodes []v1.Node, timeout time.Duration) error {
 	errMsg := []string{}
 	for i := range nodes {
 		node := &nodes[i]
