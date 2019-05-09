@@ -28,10 +28,12 @@ import (
 	"google.golang.org/grpc"
 	"k8s.io/klog"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/sets"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	v1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
+	"k8s.io/kubernetes/pkg/features"
 	pluginapi "k8s.io/kubernetes/pkg/kubelet/apis/deviceplugin/v1beta1"
 	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
@@ -134,6 +136,7 @@ func newManagerImpl(socketPath string) (*ManagerImpl, error) {
 		return nil, fmt.Errorf("failed to initialize checkpoint manager: %v", err)
 	}
 	manager.checkpointManager = checkpointManager
+	manager.writeCheckpoint()
 
 	return manager, nil
 }
@@ -829,4 +832,19 @@ func (m *ManagerImpl) GetDevices(podUID, containerName string) []*podresourcesap
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	return m.podDevices.getContainerDevices(podUID, containerName)
+}
+
+// ShouldResetExtendedResourceCapacity returns whether the extended resources should be zeroed or not,
+// depending on whether the node has been recreated. Absence of the checkpoint file strongly indicates the node
+// has been recreated.
+func (m *ManagerImpl) ShouldResetExtendedResourceCapacity() bool {
+	if utilfeature.DefaultFeatureGate.Enabled(features.DevicePlugins) {
+		// return false if checkpoint exists
+		checkpoints, err := m.checkpointManager.ListCheckpoints()
+		if err != nil {
+			return false
+		}
+		return len(checkpoints) == 0
+	}
+	return false
 }
