@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	clientset "k8s.io/client-go/kubernetes"
@@ -73,6 +73,7 @@ var _ = SIGDescribe("TaintBasedEvictions [Serial]", func() {
 	// 5. node lifecycle manager generate a status change: [NodeReady=true, status=ConditionTrue]
 	// 6. node.kubernetes.io/unreachable=:NoExecute taint is taken off the node
 	It("Checks that the node becomes unreachable", func() {
+		framework.SkipUnlessProviderIs("gce", "gke", "aws")
 		// find an available node
 		nodeName := GetNodeThatCanRunPod(f)
 		By("Finding an available node " + nodeName)
